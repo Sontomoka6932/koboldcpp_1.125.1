@@ -3435,34 +3435,22 @@ static bool ggml_thread_apply_priority(int32_t prio) {
         case GGML_SCHED_PRIO_REALTIME: p = THREAD_PRIORITY_TIME_CRITICAL; break;
     }
 
+    //┌─[Enigma MOD]──────────────────────────────────────────────────────────────┐
+    // Избавляемся от взовов SetProcessInformation и ProcessPowerThrottling
+    // В ядре старых Windows их нет - ставим заглушку.
     if (prio != GGML_SCHED_PRIO_LOW) {
-        // Tell Windows that this thread should not be throttled (needs its own CPU core).
-        // Newer Windows 11 versions aggressively park (offline) CPU cores and often place
-        // all our threads onto the first 4 cores which results in terrible performance with
-        // n_threads > 4
-        #if _WIN32_WINNT >= 0x602
-        PROCESS_POWER_THROTTLING_STATE t;
-        ZeroMemory(&t, sizeof(t));
-        t.Version     = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
-        t.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
-        t.StateMask   = 0;
-
-        typedef BOOL (WINAPI * set_process_information_t)(
-                HANDLE, PROCESS_INFORMATION_CLASS, LPVOID, DWORD);
-        set_process_information_t pSetProcessInformation = NULL;
-        HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
-        if (kernel32 != NULL) {
-            pSetProcessInformation = (set_process_information_t) (void *)
-                    GetProcAddress(kernel32, "SetProcessInformation");
-        }
-
-        if (pSetProcessInformation != NULL &&
-                !pSetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &t, sizeof(t))) {
-            // GGML_LOG_DEBUG("failed to disable process power throttling %d : (%d)\n", prio, (int) GetLastError());
-            return false;
-        }
+        // Power Throttling нет на Win7 — пропускаем
+        #ifndef USE_FAILSAFE
+            // заглушка: ничего не делаем
+        #else
+            static bool powethrottlemsgshown = false;
+            if (!powethrottlemsgshown) {
+                powethrottlemsgshown = true;
+                printf("\nPower Throttling skipped in compatibility mode.\n");
+            }
         #endif
     }
+    //└──────────────────────────────────────────────────────────────────────[78]─┘
 
     if (prio == GGML_SCHED_PRIO_NORMAL) {
         // Keep inherited policy/priority
