@@ -201,26 +201,28 @@ struct llama_v2_mmap {
             throw std::runtime_error(format_old("MapViewOfFile failed: %s", llama_v2_format_win_err(error).c_str()));
         }
 
+	//┌─[Enigma MOD]──────────────────────────────────────────────────────────────┐
+        // АНАЛОГ ПРЕДЗАГРУЗКИ ДЛЯ WINDOWS 7:
+        // Принудительно считываем по одному байту с каждой страницы памяти.
+        // Это заставляет ОС физически загрузить данные с диска в RAM.
         if (prefetch) {
-            // PrefetchVirtualMemory is only exported by Windows 8 and later.
-            // Resolve it dynamically so this library can still load on Windows 7.
-            BOOL (WINAPI *pPrefetchVirtualMemory) (HANDLE, ULONG_PTR, PWIN32_MEMORY_RANGE_ENTRY, ULONG);
-            HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
-
-            pPrefetchVirtualMemory = reinterpret_cast<decltype(pPrefetchVirtualMemory)> (
-                    GetProcAddress(hKernel32, "PrefetchVirtualMemory"));
-
-            if (pPrefetchVirtualMemory) {
-                // Advise the kernel to preload the mapped memory.
-                WIN32_MEMORY_RANGE_ENTRY range;
-                range.VirtualAddress = addr;
-                range.NumberOfBytes = (SIZE_T)size;
-                if (!pPrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0)) {
-                    fprintf(stderr, "warning: PrefetchVirtualMemory failed: %s\n",
-                            llama_v2_format_win_err(GetLastError()).c_str());
+            // Аналог предзагрузки для Windows 7: PrefetchVirtualMemory есть только с Win 8.
+            // Принудительно читаем по одному байту с каждой страницы — ОС загрузит данные в RAM.
+            // volatile нужен, чтобы компилятор не вырезал чтение при оптимизации.
+            #ifndef USE_FAILSAFE
+                if (size > 0) {
+                    volatile uint8_t *ptr = static_cast<volatile uint8_t *>(addr);
+                    const size_t page_size = 4096;
+                    for (size_t i = 0; i < size; i += page_size) {
+                        (void)ptr[i];
+                    }
+                    (void)ptr[size - 1];
                 }
-            }
+            #else
+                printf("\nPrefetching skipped in compatibility mode.\n");
+            #endif
         }
+	//└──────────────────────────────────────────────────────────────────────[78]─┘
     }
 
     ~llama_v2_mmap() {
